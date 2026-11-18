@@ -16,7 +16,7 @@ if uploaded_file is not None:
         # อ่านไฟล์ที่ผู้ใช้อัปโหลด
         df = pd.read_csv(uploaded_file, encoding='gb18030', dtype={'编码': str, '运单号': str, '收件人电话': str, '收件人身份证号码': str})
         
-        # --- เริ่มกระบวนการทำความสะอาดข้อมูล ---
+        # --- ฟังก์ชันทำความสะอาดข้อมูลพื้นฐาน (เทียบเท่าสูตร =CLEAN) ---
         def clean_text(val):
             if pd.isna(val): return ""
             s = str(val)
@@ -24,6 +24,23 @@ if uploaded_file is not None:
             s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', s)
             return s.strip()
 
+        # --- เตรียมข้อมูลสำหรับไฟล์ _证件 (ใช้ข้อมูลตั้งต้นก่อนประมวลผล 规格) ---
+        df_cert = df.copy()
+        for col_idx in [1, 2, 3]:
+            if col_idx < len(df_cert.columns):
+                col_name = df_cert.columns[col_idx]
+                df_cert[col_name] = df_cert[col_name].apply(clean_text)
+
+        if '运单号' in df_cert.columns:
+            df_cert['运单号'] = df_cert['运单号'].apply(clean_text)
+            df_cert = df_cert.drop_duplicates(subset=['运单号'], keep='first')
+
+        output3 = io.BytesIO()
+        with pd.ExcelWriter(output3, engine='openpyxl') as writer:
+            df_cert.to_excel(writer, index=False)
+        output3.seek(0)
+
+        # --- ทำความสะอาดคอลัมน์หลักสำหรับไฟล์ Processed และ 规格 ---
         cols_to_clean = ['运单号', '编码', '收件人身份证号码', '收件人电话', '申报人名称', '用户昵称']
         for col in cols_to_clean:
             if col in df.columns:
@@ -41,8 +58,13 @@ if uploaded_file is not None:
                 
             spec = re.sub(r'(?i)f码', '均码', spec)
             spec = spec.lower()
+            
+            # ลบตัวอักษรจีน (ยกเว้น 粒, 片, 码, 均) พร้อมลบช่องว่าง (" ") และ "/"
             spec = re.sub(r'[\u4e00-\u9fa5]', lambda m: m.group() if m.group() in '粒片码均' else '', spec)
-            spec = spec.replace('/', '')
+            spec = spec.replace(' ', '').replace('/', '')
+            
+            # ลบ *1 ออก (ไม่กระทบ *10, *12 ฯลฯ)
+            spec = re.sub(r'\*1(?!\d)', '', spec)
             
             if 'g' in spec or 'ml' in spec:
                 spec = spec.replace('粒', '').replace('片', '')
@@ -94,7 +116,14 @@ if uploaded_file is not None:
             base_new_spec = base_new_spec.strip()
             
             spec_1 = base_new_spec
-            spec_2 = base_new_spec.replace('片', ' Pcs').replace('粒', ' Capsule').replace('码', ' Size')
+            # เปลี่ยน 均码 เป็น Free size ก่อนเปลี่ยน 码 เป็น Size
+            spec_2 = (
+                base_new_spec
+                .replace('均码', 'Free size')
+                .replace('片', ' Pcs')
+                .replace('粒', ' Capsule')
+                .replace('码', ' Size')
+            )
             
             return pd.Series([final_spec, spec_1, spec_2, highlight])
 
@@ -121,7 +150,7 @@ if uploaded_file is not None:
         if '运单号' in df.columns:
             df = df.sort_values(by='运单号')
 
-        # --- เตรียมไฟล์ให้พร้อมดาวน์โหลด ---
+        # --- เตรียมไฟล์ที่ 1 และ 2 ให้พร้อมดาวน์โหลด ---
         highlight_mask = df['_highlight_spec'].values
         base_name = uploaded_file.name.rsplit('.', 1)[0]
         
@@ -146,14 +175,16 @@ if uploaded_file is not None:
             styled_df_spec.to_excel(writer, index=False)
         output2.seek(0)
         
-        # แสดงผลบนหน้าเว็บ
+        # แสดงผลบนหน้าเว็บ (เพิ่มเป็น 3 ปุ่ม)
         st.success("✅ ประมวลผลสำเร็จ! กดปุ่มด้านล่างเพื่อดาวน์โหลดไฟล์")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.download_button(label="📥 ดาวน์โหลด _Processed", data=output1, file_name=f"{base_name}_Processed.xlsx", mime="application/vnd.ms-excel")
+            st.download_button(label="📥 ดาวน์โหลด _Processed", data=output1, file_name=f"{base_name}_Processed.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col2:
-            st.download_button(label="📥 ดาวน์โหลด _规格", data=output2, file_name=f"{base_name}_规格.xlsx", mime="application/vnd.ms-excel")
+            st.download_button(label="📥 ดาวน์โหลด _规格", data=output2, file_name=f"{base_name}_规格.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with col3:
+            st.download_button(label="📥 ดาวน์โหลด _证件", data=output3, file_name=f"{base_name}_证件.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาด: {e}")
