@@ -24,15 +24,15 @@ if uploaded_file is not None:
             s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', s)
             return s.strip()
 
-        # --- เตรียมข้อมูลสำหรับไฟล์ _证件 (ใช้ข้อมูลตั้งต้นก่อนประมวลผล 规格) ---
-        df_cert = df.copy()
-        for col_idx in [1, 2, 3]:
-            if col_idx < len(df_cert.columns):
-                col_name = df_cert.columns[col_idx]
-                df_cert[col_name] = df_cert[col_name].apply(clean_text)
+        # --- เตรียมข้อมูลสำหรับไฟล์ _证件 (เหลือเฉพาะ 4 คอลัมน์ที่กำหนด) ---
+        cert_cols = ['用户昵称', '运单号', '申报人名称', '收件人身份证号码']
+        existing_cert_cols = [c for c in cert_cols if c in df.columns]
+        df_cert = df[existing_cert_cols].copy()
+
+        for col in existing_cert_cols:
+            df_cert[col] = df_cert[col].apply(clean_text)
 
         if '运单号' in df_cert.columns:
-            df_cert['运单号'] = df_cert['运单号'].apply(clean_text)
             df_cert = df_cert.drop_duplicates(subset=['运单号'], keep='first')
 
         output3 = io.BytesIO()
@@ -175,7 +175,7 @@ if uploaded_file is not None:
             styled_df_spec.to_excel(writer, index=False)
         output2.seek(0)
         
-        # แสดงผลบนหน้าเว็บ (เพิ่มเป็น 3 ปุ่ม)
+        # แสดงผลบนหน้าเว็บ
         st.success("✅ ประมวลผลสำเร็จ! กดปุ่มด้านล่างเพื่อดาวน์โหลดไฟล์")
         
         col1, col2, col3 = st.columns(3)
