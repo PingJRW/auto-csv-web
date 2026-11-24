@@ -13,7 +13,7 @@ st.title("📦 ระบบจัดการไฟล์ CSV อัตโนม
 tab1, tab2 = st.tabs(["📑 1. จัดการข้อมูลสินค้า (_Processed / _规格 / _证件)", "💰 2. จัดการบิลขนส่งรายวัน (导出财务)"])
 
 # ==========================================
-# TAB 1: ระบบจัดการข้อมูลสินค้า (โค้ดเดิมของคุณ)
+# TAB 1: ระบบจัดการข้อมูลสินค้า
 # ==========================================
 with tab1:
     st.subheader("อัปโหลดไฟล์สินค้า (สร้าง 3 ไฟล์พร้อมกัน)")
@@ -72,6 +72,9 @@ with tab1:
                 spec = spec.lower()
 
                 spec = re.sub(r'[\u4e00-\u9fa5]', lambda m: m.group() if m.group() in '粒片码均' else '', spec)
+                if '粒' in spec and '片' in spec:
+                    spec = spec.replace('片', '')
+
                 spec = spec.replace(' ', '').replace('/', '')
                 spec = re.sub(r'\*1(?!\d)', '', spec)
 
