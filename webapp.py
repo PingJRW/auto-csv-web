@@ -10,13 +10,13 @@ st.set_page_config(page_title="ระบบจัดการไฟล์ CSV �
 st.title("📦 ระบบจัดการไฟล์ CSV อัตโนมัติ")
 
 # แบ่งหน้าจอเป็น 2 แท็บตามประเภทงาน
-tab1, tab2 = st.tabs(["📑 1. 清单优化 (_Processed / _规格 / _证件)", "💰 2. 空运账单 (导出财务)"])
+tab1, tab2 = st.tabs(["📑 1. 清单优化 (_Processed / _规格 / _证件 / 海关退件明细)", "💰 2. 账单 (导出财务)"])
 
 # ==========================================
 # TAB 1: ระบบ清单优化
 # ==========================================
 with tab1:
-    st.subheader("อัปโหลดไฟล์สินค้า (สร้าง 3 ไฟล์พร้อมกัน)")
+    st.subheader("อัปโหลดไฟล์สินค้า (สร้าง 4 ไฟล์พร้อมกัน)")
     uploaded_file_1 = st.file_uploader("ลากไฟล์ CSV สินค้ามาวางที่นี่", type=['csv'], key="uploader_tab1")
 
     if uploaded_file_1 is not None:
@@ -51,6 +51,23 @@ with tab1:
             with pd.ExcelWriter(output3, engine='openpyxl') as writer:
                 df_cert.to_excel(writer, index=False)
             output3.seek(0)
+
+            # --- เตรียมข้อมูลสำหรับไฟล์ 海关退件明细.xlsx (เฉพาะคอลัมน์ 运单号 ลบตัวซ้ำ) ---
+            if '运单号' in df.columns:
+                df_return = df[['运单号']].copy()
+                df_return['运单号'] = df_return['运单号'].apply(clean_text)
+                df_return = df_return[df_return['运单号'] != '']
+                df_return = df_return.drop_duplicates(subset=['运单号'], keep='first')
+            else:
+                df_return = pd.DataFrame(columns=['运单号'])
+
+            output4 = io.BytesIO()
+            with pd.ExcelWriter(output4, engine='openpyxl') as writer:
+                df_return.to_excel(writer, index=False, sheet_name='Sheet1')
+                ws_ret = writer.sheets['Sheet1']
+                for row_idx in range(2, len(df_return) + 2):
+                    ws_ret.cell(row=row_idx, column=1).number_format = '@'
+            output4.seek(0)
 
             # --- ทำความสะอาดคอลัมน์หลัก ---
             cols_to_clean = ['运单号', '编码', '收件人身份证号码', '收件人电话', '申报人名称', '用户昵称']
@@ -145,6 +162,8 @@ with tab1:
             if '规格' in df.columns:
                 spec_results = df.apply(process_spec_row, axis=1)
                 df['规格'] = spec_results[0]
+                df['_spec_1'] = spec_results[1]
+                df['_spec_2'] = spec_results[2]
                 df['_highlight_spec'] = spec_results[3]
             else:
                 df['_highlight_spec'] = False
@@ -168,53 +187,75 @@ with tab1:
 
             if '运单号' in df.columns:
                 df = df.sort_values(by='运单号')
+                # ตรวจสอบ 运单号 ที่ซ้ำกันเกิน 20 แถว (> 20)
+                waybill_counts = df['运单号'].value_counts()
+                over_limit_waybills = waybill_counts[(waybill_counts > 20) & (waybill_counts.index != '')]
+                df['_highlight_waybill'] = df['运单号'].isin(over_limit_waybills.index)
+            else:
+                over_limit_waybills = pd.Series(dtype=int)
+                df['_highlight_waybill'] = False
 
-            highlight_mask = df['_highlight_spec'].values
+            highlight_spec_mask = df['_highlight_spec'].values
+            highlight_waybill_mask = df['_highlight_waybill'].values
             base_name = uploaded_file_1.name.rsplit('.', 1)[0]
 
+            helper_cols = [c for c in ['_spec_1', '_spec_2', '_highlight_spec', '_highlight_waybill'] if c in df.columns]
+
+            def apply_row_styles(target_df):
+                styler = target_df.style
+                if '规格' in target_df.columns:
+                    styler = styler.apply(
+                        lambda col: ['background-color: #FFFF00' if m else '' for m in highlight_spec_mask],
+                        subset=['规格']
+                    )
+                if '运单号' in target_df.columns:
+                    styler = styler.apply(
+                        lambda col: ['background-color: #FF9999' if m else '' for m in highlight_waybill_mask],
+                        subset=['运单号']
+                    )
+                return styler
+
             # ไฟล์ที่ 1: _Processed
-            df1_save = df.drop(columns=['_highlight_spec'])
+            df1_save = df.drop(columns=helper_cols)
             output1 = io.BytesIO()
             with pd.ExcelWriter(output1, engine='openpyxl') as writer:
-                styled_df1 = df1_save.style.apply(
-                    lambda col: ['background-color: #FFFF00' if m else '' for m in highlight_mask],
-                    subset=['规格']
-                )
-                styled_df1.to_excel(writer, index=False)
+                apply_row_styles(df1_save).to_excel(writer, index=False)
             output1.seek(0)
 
             # ไฟล์ที่ 2: _规格
-            df2_save = df.drop(columns=['_highlight_spec'])
+            df2_save = df.drop(columns=helper_cols)
             if '规格' in df.columns:
                 idx = df2_save.columns.get_loc('规格')
-                df2_save.insert(idx, '规格_1', spec_results[1])
-                df2_save.insert(idx + 1, '规格_2', spec_results[2])
+                df2_save.insert(idx, '规格_1', df['_spec_1'].values)
+                df2_save.insert(idx + 1, '规格_2', df['_spec_2'].values)
 
             output2 = io.BytesIO()
             with pd.ExcelWriter(output2, engine='openpyxl') as writer:
-                styled_df_spec = df2_save.style.apply(
-                    lambda col: ['background-color: #FFFF00' if m else '' for m in highlight_mask],
-                    subset=['规格']
-                )
-                styled_df_spec.to_excel(writer, index=False)
+                apply_row_styles(df2_save).to_excel(writer, index=False)
             output2.seek(0)
 
             st.success("✅ ประมวลผลสำเร็จ! กดปุ่มด้านล่างเพื่อดาวน์โหลดไฟล์")
 
-            col1, col2, col3 = st.columns(3)
+            # แจ้งเตือนหากพบ 运单号 เกิน 20 แถว
+            if not over_limit_waybills.empty:
+                st.error(f"🚨 พบเลข 运单号 ที่มีรายการเกิน 20 แถว จำนวน **{len(over_limit_waybills)}** เลข (ไฮไลต์สีแดงในไฟล์ Excel):")
+                warn_lines = [f"- 运单号: `{wb}` (ซ้ำทั้งหมด **{cnt}** แถว)" for wb, cnt in over_limit_waybills.items()]
+                st.markdown("\n".join(warn_lines))
+
+            col1, col2 = st.columns(2)
             with col1:
                 st.download_button("📥 ดาวน์โหลด _Processed", output1, f"{base_name}_Processed.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("📥 ดาวน์โหลด _证件", output3, f"{base_name}_证件.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             with col2:
                 st.download_button("📥 ดาวน์โหลด _规格", output2, f"{base_name}_规格.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with col3:
-                st.download_button("📥 ดาวน์โหลด _证件", output3, f"{base_name}_证件.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("📥 ดาวน์โหลด 海关退件明细", output4, "海关退件明细.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         except Exception as e:
             st.error(f"เกิดข้อผิดพลาด: {e}")
 
 
 # ==========================================
-# TAB 2: ระบบ空运账单 (process_daily_bill.py)
+# TAB 2: ระบบ账单 (process_daily_bill.py)
 # ==========================================
 with tab2:
     st.subheader("อัปโหลดไฟล์บิลรายวัน (สร้างไฟล์ 导出财务YYMMDD.xlsx)")
@@ -322,29 +363,4 @@ with tab2:
 
                 # ปรับความกว้างคอลัมน์อัตโนมัติ
                 for col_idx, col_name in enumerate(df_bill.columns, start=1):
-                    col_letter = get_column_letter(col_idx)
-                    max_data_width = df_bill[col_name].map(calc_display_width).max() if not df_bill.empty else 0
-                    max_len = max(max_data_width, calc_display_width(col_name))
-                    ws.column_dimensions[col_letter].width = max_len + 4
-
-            output_bill.seek(0)
-
-            # แสดงผลลัพธ์และแจ้งเตือนบนหน้าเว็บ
-            st.success(f"✅ จัดระเบียบข้อมูลสำเร็จ! จำนวนรายการสุทธิ: **{len(df_bill)}** แถว")
-
-            if warnings:
-                st.warning(f"⚠️ พบชื่อมณฑล (省) ที่ไม่ตรงกับรายชื่อมาตรฐาน **{len(warnings)}** รายการ:")
-                with st.expander("คลิกเพื่อดูรายการที่ต้องตรวจสอบ", expanded=True):
-                    st.markdown("\n".join(warnings))
-            else:
-                st.info("✅ ตรวจสอบชื่อมณฑล (省) ถูกต้องครบทุกรายการ")
-
-            st.download_button(
-                label=f"📥 ดาวน์โหลดไฟล์ {bill_filename}",
-                data=output_bill,
-                file_name=bill_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดในการประมวลผลบิล: {e}")
+                    col_letter = get_column
