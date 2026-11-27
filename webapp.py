@@ -10,10 +10,10 @@ st.set_page_config(page_title="ระบบจัดการไฟล์ CSV �
 st.title("📦 ระบบจัดการไฟล์ CSV อัตโนมัติ")
 
 # แบ่งหน้าจอเป็น 2 แท็บตามประเภทงาน
-tab1, tab2 = st.tabs(["📑 1. 清单优化 (_Processed / _规格 / _证件 / 海关退件明细)", "💰 2. 账单 (导出财务)"])
+tab1, tab2 = st.tabs(["📑 1. 清单优化", "💰 2. จัดการบิลขนส่งรายวัน (导出财务)"])
 
 # ==========================================
-# TAB 1: ระบบ清单优化
+# TAB 1: 清单优化
 # ==========================================
 with tab1:
     st.subheader("อัปโหลดไฟล์สินค้า (สร้าง 4 ไฟล์พร้อมกัน)")
@@ -187,7 +187,6 @@ with tab1:
 
             if '运单号' in df.columns:
                 df = df.sort_values(by='运单号')
-                # ตรวจสอบ 运单号 ที่ซ้ำกันเกิน 20 แถว (> 20)
                 waybill_counts = df['运单号'].value_counts()
                 over_limit_waybills = waybill_counts[(waybill_counts > 20) & (waybill_counts.index != '')]
                 df['_highlight_waybill'] = df['运单号'].isin(over_limit_waybills.index)
@@ -236,7 +235,6 @@ with tab1:
 
             st.success("✅ ประมวลผลสำเร็จ! กดปุ่มด้านล่างเพื่อดาวน์โหลดไฟล์")
 
-            # แจ้งเตือนหากพบ 运单号 เกิน 20 แถว
             if not over_limit_waybills.empty:
                 st.error(f"🚨 พบเลข 运单号 ที่มีรายการเกิน 20 แถว จำนวน **{len(over_limit_waybills)}** เลข (ไฮไลต์สีแดงในไฟล์ Excel):")
                 warn_lines = [f"- 运单号: `{wb}` (ซ้ำทั้งหมด **{cnt}** แถว)" for wb, cnt in over_limit_waybills.items()]
@@ -255,7 +253,7 @@ with tab1:
 
 
 # ==========================================
-# TAB 2: ระบบ账单 (process_daily_bill.py)
+# TAB 2: ระบบจัดการบิลขนส่งรายวัน (process_daily_bill.py)
 # ==========================================
 with tab2:
     st.subheader("อัปโหลดไฟล์บิลรายวัน (สร้างไฟล์ 导出财务YYMMDD.xlsx)")
@@ -363,4 +361,29 @@ with tab2:
 
                 # ปรับความกว้างคอลัมน์อัตโนมัติ
                 for col_idx, col_name in enumerate(df_bill.columns, start=1):
-                    col_letter = get_column
+                    col_letter = get_column_letter(col_idx)
+                    max_data_width = df_bill[col_name].map(calc_display_width).max() if not df_bill.empty else 0
+                    max_len = max(max_data_width, calc_display_width(col_name))
+                    ws.column_dimensions[col_letter].width = max_len + 4
+
+            output_bill.seek(0)
+
+            # แสดงผลลัพธ์และแจ้งเตือนบนหน้าเว็บ
+            st.success(f"✅ จัดระเบียบข้อมูลสำเร็จ! จำนวนรายการสุทธิ: **{len(df_bill)}** แถว")
+
+            if warnings:
+                st.warning(f"⚠️ พบชื่อมณฑล (省) ที่ไม่ตรงกับรายชื่อมาตรฐาน **{len(warnings)}** รายการ:")
+                with st.expander("คลิกเพื่อดูรายการที่ต้องตรวจสอบ", expanded=True):
+                    st.markdown("\n".join(warnings))
+            else:
+                st.info("✅ ตรวจสอบชื่อมณฑล (省) ถูกต้องครบทุกรายการ")
+
+            st.download_button(
+                label=f"📥 ดาวน์โหลดไฟล์ {bill_filename}",
+                data=output_bill,
+                file_name=bill_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        except Exception as e:
+            st.error(f"เกิดข้อผิดพลาดในการประมวลผลบิล: {e}")
